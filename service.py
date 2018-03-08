@@ -1,10 +1,30 @@
+#!/usr/bin/env python
+import httplib2
+import datetime
+import time
+import os
+import selenium 
+import json
+import boto3
+import requests
+from dateutil.parser import parse
 from selenium import webdriver
+from selenium.webdriver.support.ui import Select
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
+from apiclient.discovery import build
+from oauth2client.client import GoogleCredentials
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 import sys
 import math
+
+# Entry point in AWS lambda
+def handler(event, context):
+	# set user agent
+	main()
 
 ################################################################
 class Hours:
@@ -73,7 +93,16 @@ def clickOnClassAndWait(driver):
 def main(*args):
     
     #browser = webdriver.Firefox() #replace with .Firefox(), or with the browser of your choice
-    browser = webdriver.PhantomJS() 
+    #browser = webdriver.PhantomJS()
+
+    user_agent = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.111 Safari/537.36")
+    dcap = dict(DesiredCapabilities.PHANTOMJS)
+    dcap["phantomjs.page.settings.userAgent"] = user_agent
+    dcap["phantomjs.page.settings.javascriptEnabled"] = True
+    browser = webdriver.PhantomJS(service_log_path=os.path.devnull, 
+                                  executable_path="/var/task/phantomjs", 
+                                  service_args=['--ignore-ssl-errors=true'], 
+                                  desired_capabilities=dcap) 
   
     try:
         # load url
@@ -90,6 +119,8 @@ def main(*args):
         zellen = browser.find_elements_by_css_selector(".renderedEntry")
 
         stundenplan = []
+        undel=dict()
+
         for zelle in zellen:
 
             stunde = hours.getHourForCell(zelle)
@@ -106,17 +137,26 @@ def main(*args):
                 if item.find_element_by_xpath('..').get_attribute('style').find('line-through')>-1:
                     deleted = True
 
-            stunde=(kurs,tag,stunde,deleted)
-            stundenplan.append(stunde)
+            stunde_=(kurs,tag,stunde,deleted)
+            stundenplan.append(stunde_)
+            if (deleted == False):
+                #item[1]+"_"+str(item[2])
+                undel[tag+"_"+str(stunde)]=stunde_
+
             #print stunde
 
 
         print "-------------------"
         for item in stundenplan:
             if item[3]:
-                print item[1] + ": Stunde " + item[2] + ":" + item[0] + " entfaellt"
-            else:
-                print item[1] + ": Stunde " + item[2] + ":" + item[0] + " entfaellt nicht"
+                out = item[1] + ", "+item[2]+". Stunde (" + item[0] +") "
+                #print item[1]+"_"+str(item[2])
+                if item[1]+"_"+str(item[2]) in undel:
+                    print out + " ersetzt durch "+undel[item[1]+"_"+str(item[2])][0]
+                else:
+                    print out+" FREI!"
+            #else:
+                #print item[1] + ": Stunde " + item[2] + ":" + item[0] + " entfaellt nicht"
         print "-------------------"
 
 
