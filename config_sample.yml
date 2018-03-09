@@ -1,0 +1,5 @@
+source:
+  url: https://asopo.webuntis.com/WebUntis/
+  parameters:
+    school: Schulname in URL
+  fragment: /basic/timetable

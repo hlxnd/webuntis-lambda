@@ -20,6 +20,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 import sys
 import math
+import yaml
+
+global config
 
 # Entry point in AWS lambda
 def handler(event, context):
@@ -73,7 +76,17 @@ TIMEOUT = 5
 
 ################################################################
 def loadUrlAndWait(driver):
-    url = "https://asopo.webuntis.com/WebUntis/?school=Einstein-Gym-Kehl#/basic/timetable"
+    url = config["source"]["url"]
+
+    if ("parameters" in config["source"]):
+        if len(config["source"]["parameters"])>0:
+            url+="?"
+            for paramName in config["source"]["parameters"]:
+                url+=paramName+"="+config["source"]["parameters"][paramName]
+    
+    if ((config["source"]["fragment"]).strip()!=""):
+        url+="#"+(config["source"]["fragment"]).strip()
+
     driver.get(url) #navigate to the page
     # wait till element loaded
     element_present = EC.presence_of_element_located((By.CSS_SELECTOR, "a[title='5d']"))
@@ -92,6 +105,9 @@ def clickOnClassAndWait(driver):
 ################################################################
 def main(*args):
     
+    global config
+    config = yaml.safe_load(open("config.yml"))
+
     #browser = webdriver.Firefox() #replace with .Firefox(), or with the browser of your choice
     #browser = webdriver.PhantomJS()
 
