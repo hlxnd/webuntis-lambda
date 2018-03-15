@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import httplib2
-import datetime
+#import datetime
 import time
 import os
 import selenium 
@@ -21,13 +21,15 @@ from selenium.webdriver.common.by import By
 import sys
 import math
 import yaml
+from datetime import datetime, timedelta, date
+import dynamoDB
 
 global config
 
 # Entry point in AWS lambda
 def handler(event, context):
-	# set user agent
-	main()
+    # set user agent
+    main()
 
 ################################################################
 class Hours:
@@ -44,7 +46,6 @@ class Hours:
         pos=cell.location['y'] + cell.size['height']/2
 
         for item in self.hours:
-            #print pos,item[1],item[0]
             if pos>item[1] and pos<item[2]:
                 return item[0]
         return "?"
@@ -89,19 +90,82 @@ def loadUrlAndWait(driver):
 
     driver.get(url) #navigate to the page
     # wait till element loaded
-    element_present = EC.presence_of_element_located((By.CSS_SELECTOR, "a[title='5d']"))
+    element_present = EC.presence_of_element_located((By.CSS_SELECTOR,
+                                                      "a[title='" + config["class_link_title"] + "']"))
     WebDriverWait(driver, TIMEOUT).until(element_present)
     driver.set_window_size(1024,768)
     #driver.save_screenshot('screen.png')
 
 ################################################################
 def clickOnClassAndWait(driver):
-    button5d = driver.find_element_by_css_selector("a[title='5d']")
-    button5d.click()
-    element_present = EC.presence_of_element_located((By.CSS_SELECTOR, '.entryContent .def span'))
-    WebDriverWait(driver, TIMEOUT).until(element_present)
-    #driver.save_screenshot('screen2.png')
+    button_class = driver.find_element_by_css_selector("a[title='"+config["class_link_title"]+"']")
+    button_class.click()
+    element_present = EC.presence_of_element_located((  By.CSS_SELECTOR, 
+                                                        '.renderedEntry .entryContent .def span'))
+    try:
+        WebDriverWait(driver, TIMEOUT).until(element_present)
+    except TimeoutException:
+        if datetime.today().weekday()>=5:
+            button_next_week = driver.find_element_by_css_selector(".un-week-picker__btn .fa-arrow-right")
+            button_next_week.click()
+            driver.save_screenshot('screen3.png')
+            element_present = EC.presence_of_element_located((By.CSS_SELECTOR, '.renderedEntry .entryContent .def span'))
+            WebDriverWait(driver, TIMEOUT).until(element_present)
+        else:
+            raise
 
+def sort_function(c):
+    return c['datetime'] + c['hour']
+
+def loadLastStundeplan():
+    db=dynamoDB.XDB()
+    my_dict={}
+    data=db.get_data()
+    try:
+        my_dict = json.loads(data)
+    except:
+        pass
+    print data
+    return my_dict
+
+def writeData(stdata):
+    db=dynamoDB.XDB()
+    data = json.dumps(stdata)
+    db.write_data(data)
+
+def makeMsg(stundenplan):
+    msg=""
+    last_day=""
+
+    # Map DELETED
+    undel=dict()
+    for lesson in stundenplan:
+        if lesson['deleted']==False:
+            undel[lesson['day']+"_"+str(lesson['hour'])]=lesson
+
+    for lesson in stundenplan:
+        if lesson['deleted']:
+            if last_day==lesson['day']:
+                out_datum="," + str(lesson['hour'])+"."
+            else:
+                out_datum = lesson['day'] + str(lesson['hour'])+"."
+            out_deleted = lesson['subject'] + "/" + lesson['teacher']
+            if lesson['day']+"_"+str(lesson['hour']) in undel:
+                newLesson=undel[lesson['day']+"_"+str(lesson['hour'])]
+                out_new = newLesson['subject'] + "/" + newLesson['teacher']
+                out = out_datum+out_new+" ("+out_deleted+")"
+            else:
+                out = out_datum+"FREI("+out_deleted+")"
+            if msg!='' and last_day != lesson['day']:
+                msg+=" / "
+            msg+=out
+            last_day = lesson['day']
+    return msg
+
+def sendSMS(msg):
+    print msg
+
+    
 ################################################################
 def main(*args):
     
@@ -127,7 +191,7 @@ def main(*args):
         # click element
         clickOnClassAndWait(browser) 
 
-        # get hours postion as element order is sometimes wrong
+        # get hours position as element order is sometimes wrong
         hours = Hours(browser)
         days = Days(browser)
 
@@ -135,7 +199,6 @@ def main(*args):
         zellen = browser.find_elements_by_css_selector(".renderedEntry")
 
         stundenplan = []
-        undel=dict()
 
         for zelle in zellen:
 
@@ -144,40 +207,55 @@ def main(*args):
 
             details = zelle.find_elements_by_css_selector(".entryContent .def span")
 
-
-            kurs = ""
+            kurs = {}
             deleted = False
-            for item in details:
-                kurs = kurs + item.text + " "
+            course = []
+            for node in details:
+                course.append(node.text)
                 #print item.text + "/" + str(zelle.location['x']) + ',' + str(zelle.location['y'])
-                if item.find_element_by_xpath('..').get_attribute('style').find('line-through')>-1:
+                if node.find_element_by_xpath('..').get_attribute('style').find('line-through')>-1:
                     deleted = True
 
-            stunde_=(kurs,tag,stunde,deleted)
-            stundenplan.append(stunde_)
-            if (deleted == False):
-                #item[1]+"_"+str(item[2])
-                undel[tag+"_"+str(stunde)]=stunde_
+            if course[0]==config["class_name"]:
 
-            #print stunde
+                # determine year
+                year=datetime.now().year
+                if datetime.now().month==12 and tag[6:8]==1:
+                    year+=1
+                elif datetime.now().month==1 and tag[6:8]==12:
+                    year-=1
 
+                kurs['datetime']=datetime.strptime(tag[3:9]+str(year),"%d.%m.%Y").strftime("%Y%m%d")
+                kurs['day']=tag
+                kurs['hour']=stunde
+                kurs['class']=course[0]
+                kurs['teacher']=course[1]
+                kurs['subject']=course[2]
+                kurs['room']=course[3]
+                kurs['deleted']=deleted
+                kurs['id']=kurs['class']+"_"+kurs['day']+"_"+kurs['hour']
 
-        print "-------------------"
-        for item in stundenplan:
-            if item[3]:
-                out = item[1] + ", "+item[2]+". Stunde (" + item[0] +") "
-                #print item[1]+"_"+str(item[2])
-                if item[1]+"_"+str(item[2]) in undel:
-                    print out + " ersetzt durch "+undel[item[1]+"_"+str(item[2])][0]
-                else:
-                    print out+" FREI!"
-            #else:
-                #print item[1] + ": Stunde " + item[2] + ":" + item[0] + " entfaellt nicht"
-        print "-------------------"
+                stundenplan.append(kurs)
 
+        stundenplan=sorted(stundenplan,key=sort_function)
+
+        # Compare to last message
+        old_tt=loadLastStundeplan()
+        # remove old days
+        old_tt= [x for x in old_tt if x['datetime'] >= datetime.now().strftime("%Y%m%d")]
+        msg_old=makeMsg(old_tt)
+
+        msg=makeMsg(stundenplan)
+
+        print msg
+
+        if msg!=msg_old:
+            writeData(stundenplan)
+            sendSMS(msg)
 
     except TimeoutException:
         print "Timed out waiting for page to load"
+        #browser.save_screenshot('timeout_screen.png')
 
     browser.close()
 
